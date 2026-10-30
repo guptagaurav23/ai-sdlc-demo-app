@@ -13,7 +13,7 @@ The application supports creating and submitting invoices, then approving or rej
 - `e2e` contains the Playwright configuration and test/page folders. Add browser-level tests there when a feature needs end-to-end coverage.
 - `docs/use-cases` contains short briefs for potential features.
 
-Controllers use routes shaped as `api/[controller]`, inherit `ApiControllerBase`, and use `Handle(...)` to map service errors to HTTP responses. Keep request-body records in their controller. Protect endpoints with the existing sign-in and role mechanisms; approval actions currently use `RequireRole("Approver", "Admin")`. The requested Manager/Director approval policy does not currently match those role names, so resolve role mapping explicitly when implementing it; do not silently assume the roles are interchangeable.
+Controllers use routes shaped as `api/[controller]`, inherit `ApiControllerBase`, and use `Handle(...)` to map service errors to HTTP responses. Keep request-body records in their controller. API calls require sign-in. Approval authorization and amount limits are enforced in the domain service so unauthorized roles receive a clear policy error; the reject endpoint retains its Approver/Admin role restriction.
 
 The in-memory repository is process-local, not durable storage. Although it uses locks for individual repository operations, do not assume a complete approval decision is atomic or protected from concurrent updates.
 
@@ -29,7 +29,7 @@ Implement and preserve these approval rules in the domain layer:
 - When an approval attempt is rejected, return a clear reason that explains why it was rejected.
 - A rejected attempt must not change any invoice data or approval history.
 
-The current `Invoice` model records a single decision (`DecidedBy`, `DecidedAt`, and `DecisionNote`); it does not currently model a separate approval history. Do not describe the rules above as already implemented. If approval history is introduced, ensure failed/rejected attempts leave both the invoice and its history unchanged.
+Stage 1 implements single-approver Manager/Director amount limits. Invoices above 500,000 cannot be single-approved in this stage; the required two-approver workflow belongs to Stage 2 and is not yet implemented. The current `Invoice` model records a single decision (`DecidedBy`, `DecidedAt`, and `DecisionNote`); it does not currently model a separate approval history. If approval history is introduced, ensure failed/rejected attempts leave both the invoice and its history unchanged.
 
 # 4. Coding Guidelines
 
