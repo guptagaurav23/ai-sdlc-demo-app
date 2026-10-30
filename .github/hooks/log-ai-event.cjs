@@ -1,33 +1,53 @@
+
 const fs = require("node:fs");
 const path = require("node:path");
 
-const event = JSON.parse(fs.readFileSync(0, "utf8"));
+let raw = "";
 
-const logFile = path.join(
-  __dirname,
-  "../../docs/ai/AI-HOOK-LOG.jsonl"
-);
+process.stdin.setEncoding("utf8");
 
-const record = {
-  timestamp: new Date().toISOString(),
-  event: event.hook_event_name || "unknown",
-  sessionId: event.sessionId || event.session_id || null,
-  agentId: event.agentId || event.agent_id || null
-};
+process.stdin.on("data", chunk => {
+  raw += chunk;
+});
 
-if (event.prompt) {
-  record.prompt = event.prompt;
-}
+process.stdin.on("end", () => {
+  try {
+    const event = JSON.parse(raw);
 
-if (event.toolName || event.tool_name) {
-  record.tool = event.toolName || event.tool_name;
-}
+    let eventName = event.hook_event_name || event.event || "unknown";
 
-fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    if (eventName === "unknown") {
+      if (event.prompt) {
+        eventName = "userPromptSubmitted";
+      } else if (event.tool_name || event.toolName) {
+        eventName = "toolUse";
+      }
+    }
 
-fs.appendFileSync(
-  logFile,
-  JSON.stringify(record) + "\n"
-);
+    const record = {
+      timestamp: event.timestamp || new Date().toISOString(),
+      event: eventName,
+      sessionId: event.session_id || event.sessionId || null,
+      agentId: event.agent_id || event.agentId || null,
+      prompt: event.prompt || undefined,
+      tool: event.tool_name || event.toolName || undefined
+    };
 
-process.stdout.write("{}");
+    const logFile = path.join(
+      __dirname,
+      "../../docs/ai/AI-HOOK-LOG.jsonl"
+    );
+
+    fs.mkdirSync(path.dirname(logFile), { recursive: true });
+
+    fs.appendFileSync(
+      logFile,
+      JSON.stringify(record) + "\n"
+    );
+
+    process.stdout.write("{}");
+  } catch (error) {
+    process.stderr.write("AI audit hook error: " + error.message);
+    process.stdout.write("{}");
+  }
+});

@@ -55,3 +55,74 @@ Add or update unit tests for every approval rule, including negative cases. Cove
 Review changes for boundary conditions, duplicate approvers, authorization, valid state transitions, unchanged data after rejected attempts, and concurrency or race conditions. Repository-level locks do not by themselves guarantee that a multi-step approval decision is atomic.
 
 Never assume generated code or tests are correct: inspect the implementation and test the required behavior. Require human review before committing.
+
+## Invoice Approval Feature — Agent Instructions
+
+### Business Requirements
+
+Implement role-based invoice approval limits.
+
+1. Managers can approve invoices up to and including 50,000.
+2. Directors can approve invoices up to and including 500,000.
+3. Invoices above 500,000 require two distinct approvers.
+4. The second approver must have the Director role.
+5. The same user must never count as both approvers.
+6. Any rejected approval attempt must return a clear reason.
+7. A rejected attempt must not modify any invoice data, approval history, status, or other persisted state.
+
+### Architecture and Layering
+
+- Keep business rules inside the Domain layer.
+- Keep API controllers thin.
+- Do not duplicate approval rules in the API layer.
+- Follow existing repository and dependency injection patterns.
+- Avoid introducing unnecessary dependencies.
+- Preserve existing functionality.
+
+### Approval Boundary Rules
+
+- An invoice of exactly 50,000 can be approved by a Manager.
+- An invoice above 50,000 and up to 500,000 requires a Director.
+- An invoice of exactly 500,000 can be approved by one Director.
+- An invoice above 500,000 requires two distinct approvers.
+- The second approver must be a Director.
+- Two approvals by the same user are never sufficient.
+
+### Testing Expectations
+
+- Use the existing test framework and conventions.
+- Add unit tests for every business rule.
+- Test boundary values explicitly.
+- Test duplicate approver rejection.
+- Test rejection of a non-director second approver.
+- Verify that rejected attempts leave invoice state unchanged.
+- Add a Playwright E2E test for rejected over-limit approval.
+- Review every AI-generated test for correctness and meaningful assertions.
+
+### Commands
+
+Run the existing test suite using:
+
+`dotnet test backend/InvoiceApp.sln`
+
+Run Playwright tests using the existing E2E configuration and documented commands.
+
+### Code Review Expectations
+
+- Review every AI-generated change.
+- Check for business-rule bypasses.
+- Check for duplicate approval vulnerabilities.
+- Check that failed operations do not mutate state.
+- Check concurrency and persistence behavior.
+- Do not automatically accept AI review findings.
+- Record every review finding as fixed, dismissed with justification, or deferred with justification.
+
+### AI Agent Expectations
+
+- Inspect existing code before implementing.
+- Follow the specification and task breakdown.
+- Implement features incrementally.
+- Do not combine both implementation stages into one change.
+- Run tests after each implementation stage.
+- Record prompts, responses, tool usage, and human decisions in the AI interaction log.
+- Never claim tests pass without executing
