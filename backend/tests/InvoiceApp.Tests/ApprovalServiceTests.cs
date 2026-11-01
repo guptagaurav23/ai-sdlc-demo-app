@@ -89,18 +89,121 @@ public class ApprovalServiceTests
     public void Approve_ManagerCannotApproveAboveLimitWithoutChangingInvoiceOrRepository()
     {
         AssertApprovalDeniedWithoutMutation(
-            InvoiceWith("INV-1", InvoiceStatus.PendingApproval, 50_001m),
+            new FakeInvoiceRepository(InvoiceWith("INV-1", InvoiceStatus.PendingApproval, 50_001m)),
+            "INV-1",
+            "demo.manager",
             "Manager",
             "Managers may only approve invoices up to 50,000.");
     }
 
     [Fact]
-    public void Approve_DirectorCannotSingleApproveAboveLimitWithoutChangingInvoiceOrRepository()
+    public void Approve_DirectorFirstApprovalAboveLimitLeavesInvoicePending()
+    {
+        var repository = new FakeInvoiceRepository(
+            InvoiceWith("INV-1", InvoiceStatus.PendingApproval, 500_000.01m));
+        var service = new ApprovalService(repository);
+
+        var result = service.Approve("INV-1", "demo.director1", "Director");
+        var storedInvoice = repository.GetById("INV-1")!;
+
+        Assert.Equal(InvoiceStatus.PendingApproval, result.Status);
+        Assert.Equal(InvoiceStatus.PendingApproval, storedInvoice.Status);
+        var firstApproval = Assert.Single(storedInvoice.ApprovalHistory);
+        Assert.Equal("demo.director1", firstApproval.Username);
+        Assert.Equal("Director", firstApproval.Role);
+        Assert.NotEqual(default, firstApproval.ApprovedAt);
+        Assert.Null(storedInvoice.DecidedBy);
+        Assert.Null(storedInvoice.DecidedAt);
+        Assert.Equal(1, repository.UpdateCalls);
+    }
+
+    [Fact]
+    public void Approve_DistinctDirectorSecondApprovalCompletesHighValueInvoice()
+    {
+        var repository = new FakeInvoiceRepository(
+            InvoiceWith("INV-1", InvoiceStatus.PendingApproval, 500_001m));
+        var service = new ApprovalService(repository);
+
+        service.Approve("INV-1", "demo.director1", "Director");
+        var result = service.Approve("INV-1", "demo.director2", "Director");
+        var storedInvoice = repository.GetById("INV-1")!;
+
+        Assert.Equal(InvoiceStatus.Approved, result.Status);
+        Assert.Equal(InvoiceStatus.Approved, storedInvoice.Status);
+        Assert.Collection(
+            storedInvoice.ApprovalHistory,
+            first => Assert.Equal("demo.director1", first.Username),
+            second => Assert.Equal("demo.director2", second.Username));
+        Assert.All(storedInvoice.ApprovalHistory, approval =>
+        {
+            Assert.Equal("Director", approval.Role);
+            Assert.NotEqual(default, approval.ApprovedAt);
+        });
+        Assert.Equal("demo.director2", storedInvoice.DecidedBy);
+        Assert.Equal(storedInvoice.ApprovalHistory[1].ApprovedAt, storedInvoice.DecidedAt);
+        Assert.Equal(2, repository.UpdateCalls);
+    }
+
+    [Fact]
+    public void Approve_DuplicateSecondApproverDoesNotChangeInvoiceOrRepository()
+    {
+        var repository = new FakeInvoiceRepository(
+            InvoiceWith("INV-1", InvoiceStatus.PendingApproval, 500_001m));
+        var service = new ApprovalService(repository);
+        service.Approve("INV-1", "demo.director1", "Director");
+
+        AssertApprovalDeniedWithoutMutation(
+            repository,
+            service,
+            "INV-1",
+            "demo.director1",
+            "Director",
+            "same user cannot approve this invoice twice");
+    }
+
+    [Fact]
+    public void Approve_DuplicateSecondApproverIsCaseInsensitive()
+    {
+        var repository = new FakeInvoiceRepository(
+            InvoiceWith("INV-1", InvoiceStatus.PendingApproval, 500_001m));
+        var service = new ApprovalService(repository);
+        service.Approve("INV-1", "demo.director1", "Director");
+
+        AssertApprovalDeniedWithoutMutation(
+            repository,
+            service,
+            "INV-1",
+            "DEMO.DIRECTOR1",
+            "Director",
+            "same user cannot approve this invoice twice");
+    }
+
+    [Fact]
+    public void Approve_NonDirectorSecondApproverDoesNotChangeInvoiceOrRepository()
+    {
+        var repository = new FakeInvoiceRepository(
+            InvoiceWith("INV-1", InvoiceStatus.PendingApproval, 500_001m));
+        var service = new ApprovalService(repository);
+        service.Approve("INV-1", "demo.director1", "Director");
+
+        AssertApprovalDeniedWithoutMutation(
+            repository,
+            service,
+            "INV-1",
+            "demo.manager",
+            "Manager",
+            "second approver for invoices above 500,000 must be a Director");
+    }
+
+    [Fact]
+    public void Approve_ManagerCannotProvideFirstApprovalAbove500000WithoutMutation()
     {
         AssertApprovalDeniedWithoutMutation(
-            InvoiceWith("INV-1", InvoiceStatus.PendingApproval, 500_001m),
-            "Director",
-            "Directors may only single-approve invoices up to 500,000.");
+            new FakeInvoiceRepository(InvoiceWith("INV-1", InvoiceStatus.PendingApproval, 500_001m)),
+            "INV-1",
+            "demo.manager",
+            "Manager",
+            "Managers may only approve invoices up to 50,000");
     }
 
     [Theory]
@@ -110,9 +213,43 @@ public class ApprovalServiceTests
     public void Approve_RejectsUnauthorizedRoleWithoutChangingInvoiceOrRepository(string role)
     {
         AssertApprovalDeniedWithoutMutation(
-            InvoiceWith("INV-1", InvoiceStatus.PendingApproval),
+            new FakeInvoiceRepository(InvoiceWith("INV-1", InvoiceStatus.PendingApproval)),
+            "INV-1",
+            "demo.user",
             role,
             $"Role '{role}' is not authorized");
+    }
+
+    [Fact]
+    public async Task Approve_ConcurrentDuplicateApprovalsCannotRecordSameUserTwice()
+    {
+        var repository = new FakeInvoiceRepository(
+            InvoiceWith("INV-1", InvoiceStatus.PendingApproval, 500_001m));
+        var service = new ApprovalService(repository);
+
+        var outcomes = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => Task.Run(() =>
+        {
+            try
+            {
+                service.Approve("INV-1", "demo.director1", "Director");
+                return (Succeeded: true, Error: (string?)null);
+            }
+            catch (InvalidOperationException exception)
+            {
+                return (Succeeded: false, Error: exception.Message);
+            }
+        })));
+
+        Assert.Single(outcomes, outcome => outcome.Succeeded);
+        Assert.Contains(
+            outcomes,
+            outcome => outcome.Error?.Contains("same user cannot approve", StringComparison.Ordinal) == true);
+        var storedInvoice = repository.GetById("INV-1")!;
+        Assert.Equal(InvoiceStatus.PendingApproval, storedInvoice.Status);
+        Assert.Collection(
+            storedInvoice.ApprovalHistory,
+            approval => Assert.Equal("demo.director1", approval.Username));
+        Assert.Equal(1, repository.UpdateCalls);
     }
 
     [Fact]
@@ -151,36 +288,48 @@ public class ApprovalServiceTests
     }
 
     private static void AssertApprovalDeniedWithoutMutation(
-        Invoice invoice,
+        FakeInvoiceRepository repository,
+        string invoiceId,
+        string approver,
         string role,
         string expectedMessage)
     {
-        var repository = new FakeInvoiceRepository(invoice);
         var service = new ApprovalService(repository);
-        var originalState = (
-            invoice.Id,
-            invoice.CustomerName,
-            invoice.Amount,
-            invoice.Status,
-            invoice.CreatedAt,
-            invoice.DecidedBy,
-            invoice.DecidedAt,
-            invoice.DecisionNote);
+        AssertApprovalDeniedWithoutMutation(
+            repository,
+            service,
+            invoiceId,
+            approver,
+            role,
+            expectedMessage);
+    }
 
+    private static void AssertApprovalDeniedWithoutMutation(
+        FakeInvoiceRepository repository,
+        ApprovalService service,
+        string invoiceId,
+        string approver,
+        string role,
+        string expectedMessage)
+    {
+        var originalInvoice = repository.GetById(invoiceId)!;
+        var originalUpdateCalls = repository.UpdateCalls;
+        var originalInvoiceCount = repository.GetAll().Count;
         var exception = Assert.Throws<InvalidOperationException>(
-            () => service.Approve(invoice.Id, "demo.user", role));
+            () => service.Approve(invoiceId, approver, role));
+        var persistedInvoice = repository.GetById(invoiceId)!;
 
         Assert.Contains(expectedMessage, exception.Message);
-        Assert.Equal(originalState, (
-            invoice.Id,
-            invoice.CustomerName,
-            invoice.Amount,
-            invoice.Status,
-            invoice.CreatedAt,
-            invoice.DecidedBy,
-            invoice.DecidedAt,
-            invoice.DecisionNote));
-        Assert.Same(invoice, repository.GetById(invoice.Id));
-        Assert.Equal(0, repository.UpdateCalls);
+        Assert.Equal(originalInvoice.Id, persistedInvoice.Id);
+        Assert.Equal(originalInvoice.CustomerName, persistedInvoice.CustomerName);
+        Assert.Equal(originalInvoice.Amount, persistedInvoice.Amount);
+        Assert.Equal(originalInvoice.Status, persistedInvoice.Status);
+        Assert.Equal(originalInvoice.CreatedAt, persistedInvoice.CreatedAt);
+        Assert.Equal(originalInvoice.DecidedBy, persistedInvoice.DecidedBy);
+        Assert.Equal(originalInvoice.DecidedAt, persistedInvoice.DecidedAt);
+        Assert.Equal(originalInvoice.DecisionNote, persistedInvoice.DecisionNote);
+        Assert.Equal(originalInvoice.ApprovalHistory, persistedInvoice.ApprovalHistory);
+        Assert.Equal(originalUpdateCalls, repository.UpdateCalls);
+        Assert.Equal(originalInvoiceCount, repository.GetAll().Count);
     }
 }

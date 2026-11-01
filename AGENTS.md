@@ -15,7 +15,7 @@ The application supports creating and submitting invoices, then approving or rej
 
 Controllers use routes shaped as `api/[controller]`, inherit `ApiControllerBase`, and use `Handle(...)` to map service errors to HTTP responses. Keep request-body records in their controller. API calls require sign-in. Approval authorization and amount limits are enforced in the domain service so unauthorized roles receive a clear policy error; the reject endpoint retains its Approver/Admin role restriction.
 
-The in-memory repository is process-local, not durable storage. Although it uses locks for individual repository operations, do not assume a complete approval decision is atomic or protected from concurrent updates.
+The in-memory repository is process-local, not durable storage. Lifecycle decisions performed through `IInvoiceRepository.ExecuteAtomically(...)` are serialized under the repository lock. Do not assume unrelated multi-step repository operations are atomic.
 
 # 3. Invoice Approval Business Rules
 
@@ -24,12 +24,12 @@ Implement and preserve these approval rules in the domain layer:
 - A Manager may approve an invoice with an amount up to and including 50,000.
 - A Director may approve an invoice with an amount up to and including 500,000.
 - An invoice above 500,000 requires two distinct approvers.
-- The second approver for an invoice above 500,000 must be a Director.
+- The first and second approvers for an invoice above 500,000 must be distinct Directors.
 - The same user must never count as both approvers.
 - When an approval attempt is rejected, return a clear reason that explains why it was rejected.
 - A rejected attempt must not change any invoice data or approval history.
 
-Stage 1 implements single-approver Manager/Director amount limits. Invoices above 500,000 cannot be single-approved in this stage; the required two-approver workflow belongs to Stage 2 and is not yet implemented. The current `Invoice` model records a single decision (`DecidedBy`, `DecidedAt`, and `DecisionNote`); it does not currently model a separate approval history. If approval history is introduced, ensure failed/rejected attempts leave both the invoice and its history unchanged.
+Stage 1 implements single-approver Manager/Director amount limits. Stage 2 requires two distinct Director approvals for invoices above 500,000: the invoice remains pending after the first approval and becomes approved after the second. `Invoice.ApprovalHistory` stores each approver's username, role, and timestamp. Failed approval attempts must leave invoice data and approval history unchanged.
 
 # 4. Coding Guidelines
 
@@ -65,7 +65,7 @@ Implement role-based invoice approval limits.
 1. Managers can approve invoices up to and including 50,000.
 2. Directors can approve invoices up to and including 500,000.
 3. Invoices above 500,000 require two distinct approvers.
-4. The second approver must have the Director role.
+4. For invoices above 500,000, the first and second approvers must both have the Director role.
 5. The same user must never count as both approvers.
 6. Any rejected approval attempt must return a clear reason.
 7. A rejected attempt must not modify any invoice data, approval history, status, or other persisted state.

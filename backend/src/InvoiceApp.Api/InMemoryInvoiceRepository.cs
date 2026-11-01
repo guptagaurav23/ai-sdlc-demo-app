@@ -27,6 +27,14 @@ public class InMemoryInvoiceRepository : IInvoiceRepository
         lock (_lock) return _invoices.FirstOrDefault(i => i.Id == id);
     }
 
+    public T ExecuteAtomically<T>(string id, Func<Invoice?, T> operation)
+    {
+        lock (_lock)
+        {
+            return operation(_invoices.FirstOrDefault(i => i.Id == id));
+        }
+    }
+
     public IReadOnlyList<Invoice> GetByIds(IEnumerable<string> ids)
     {
         var wanted = ids.ToHashSet();
