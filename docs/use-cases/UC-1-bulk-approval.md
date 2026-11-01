@@ -20,8 +20,4 @@ Approvers should be able to select several pending invoices and approve them tog
 
 - Email notifications (in-app only for now).
 
-## Open questions (good prompts for clarifying questions)
 
-- What happens to the rest of the batch if one invoice fails?
-- Can the same person be both approvers on a large invoice?
-- Is there a limit on batch size?

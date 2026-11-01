@@ -1,0 +1,27 @@
+
+{
+  "version": 1,
+  "hooks": {
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "command": "node .github/hooks/log-ai-event.cjs",
+        "timeoutSec": 10
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "command": "node .github/hooks/log-ai-event.cjs",
+        "timeoutSec": 10
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "command": "node .github/hooks/log-ai-event.cjs",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}
